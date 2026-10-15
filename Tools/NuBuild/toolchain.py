@@ -292,6 +292,23 @@ def forget_nushaders():
     _cache.pop("nushaders", None)
 
 
+# --- DXBC decompiler (optional, user-supplied) -------------------------------
+
+_DECOMPILER_FIX = ('set NUSHADERS_DECOMPILER to the command that decompiles one DXBC file, with {in} and '
+                   '{out} placeholders, e.g. "C:/tools/decompile.exe {in} {out}"')
+
+
+def decompiler():
+    """Returns the NUSHADERS_DECOMPILER command template, or Missing.
+
+    There is no default and no guessed syntax on purpose: 3DMigoto's and other
+    decompilers each take their own arguments, and wiring one up before its real
+    invocation is confirmed would only produce plausible-looking failures.
+    """
+    template = os.environ.get("NUSHADERS_DECOMPILER", "").strip()
+    return template or Missing("DXBC decompiler", _DECOMPILER_FIX)
+
+
 # --- Xbox 360 devkit transfer ------------------------------------------------
 
 _XEDK_FIX = "install the Xbox 360 XDK and set XEDK (the folder containing bin\\win32)"

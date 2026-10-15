@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/Shadow.fxh"
 #include "../Include/Fog.fxh"
@@ -123,7 +124,7 @@ texture2D HorizontalFaceTexture
  string scope = "material";
  string purpose = "none";
 >;
-sampler2D VerticalFaceTextureSampler : register(s0) 
+SAMPLER_2D(VerticalFaceTextureSampler, 0, 
 <
  string scope = "material";
  string purpose = "none";
@@ -133,8 +134,8 @@ sampler2D VerticalFaceTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D SlantedFaceTextureSampler : register(s1) 
+});
+SAMPLER_2D(SlantedFaceTextureSampler, 1, 
 <
  string scope = "material";
  string purpose = "none";
@@ -144,8 +145,8 @@ sampler2D SlantedFaceTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D HorizontalFaceTextureSampler : register(s2) 
+});
+SAMPLER_2D(HorizontalFaceTextureSampler, 2, 
 <
  string scope = "material";
  string purpose = "none";
@@ -155,7 +156,7 @@ sampler2D HorizontalFaceTextureSampler : register(s2)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;

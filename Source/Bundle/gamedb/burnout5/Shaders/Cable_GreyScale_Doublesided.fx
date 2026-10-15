@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Fog.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/DepthEncode.fxh"
@@ -62,7 +63,12 @@ vertexOutput VS_Main(vertexInput IN)
 #endif
     float3 lEyeToVertex = ViewPosition.xyz - WorldSpacePosition;
     float  lfDistance = length( lEyeToVertex );
+#ifdef D_PLATFORM_BPR
+    // Remastered: a fixed 10..500 fade, not the material's near/farFadeDistance (TUB defaults 10..200).
+    float  lfAlpha  = saturate( (lfDistance - 10.0f ) / ( 500.0f - 10.0f ) );
+#else
     float  lfAlpha  = saturate( (lfDistance - nearFadeDistance ) / ( farFadeDistance - nearFadeDistance ) ); 
+#endif
     OUT.FogAndAlpha.x = CalculateScattering( lfDistance );     
     OUT.FogAndAlpha.y = 1.0f - lfAlpha;
     return OUT;

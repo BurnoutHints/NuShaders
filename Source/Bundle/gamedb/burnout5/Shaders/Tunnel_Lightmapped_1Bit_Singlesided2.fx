@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #define USE_HDR_CONSTANTS
 #include "../Include/Constants.fxh"
 #include "../Include/NormalMapping.fxh"
@@ -39,7 +40,7 @@ texture2D DiffuseTexture : diffuse
 <
  string scope = "material";
 >;
-sampler2D DiffuseTextureSampler : register(s0)
+SAMPLER_2D(DiffuseTextureSampler, 0,
 <
  string scope = "material";
  string purpose = "none";
@@ -49,12 +50,12 @@ sampler2D DiffuseTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 texture2D LightmapTexture
 <
  string scope = "material";
 >;
-sampler2D LightmapTextureSampler : register(s1)
+SAMPLER_2D(LightmapTextureSampler, 1,
 <
  string scope = "material";
  string purpose = "none";
@@ -64,7 +65,7 @@ sampler2D LightmapTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -124,6 +125,7 @@ float4 PS_Main( vertexOutput IN, float lfFace : VFACE ) : COLOR
 #endif
 {
  float4 diffuseTexture = tex2D( DiffuseTextureSampler, IN.texCoordDiffuseAndFog.xy );
+ ALPHA_TEST( diffuseTexture.a );
  float3 lightmapTexture = tex2D( LightmapTextureSampler, IN.lightmapUV.xy ).rgb;
 float lf2xWhiteLevel = (float)FogColourPlusWhiteLevel.w + (float)FogColourPlusWhiteLevel.w;
  lightmapTexture *= lf2xWhiteLevel;

@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #define SHADOW_APPLY_Z_BIAS
 #define SHADOW_Z_BIAS_VALUE 0.0030
@@ -67,7 +68,7 @@ texture2D DiffuseTexture : diffuse
  string scope = "material";
  string purpose = "none";
 >;
-sampler2D DiffuseTextureSampler : register(s0)
+SAMPLER_2D(DiffuseTextureSampler, 0,
 <
  string scope = "material";
  string purpose = "none";
@@ -77,7 +78,7 @@ sampler2D DiffuseTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -130,6 +131,7 @@ float4 PS_Main( vertexOutput IN ) : COLOR
 #endif
 {
  float4 diffuseTexture = tex2D( DiffuseTextureSampler, IN.texCoordDiffuseAndFog.xy );
+ ALPHA_TEST( diffuseTexture.a );
  float lShadowModulation = CALC_SHADOW_FACTOR_2_SELECT( (float)IN.IndirectColourAndKey.w );
 #ifdef D_OREN_NAYAR
     float  lDirectLightFactor   = ComputeOrenNayarDiffuse( normalize(IN.WorldNormal), (float3)-KeyLightDirection, normalize(IN.ViewDirection), 0.1 ) * lShadowModulation;
@@ -189,7 +191,7 @@ vertexOutputZOnly VS_Main_ZOnly( vertexInputZOnly IN )
 float4 PS_Main_ZOnly( vertexOutputZOnly IN ): COLOR
 {
  float4 lDiffuse = tex2D( DiffuseTextureSampler, IN.texCoordDiffuse);
-    clip( lDiffuse.a - 0.499999f );
+    clip( lDiffuse.a - ALPHA_TEST_THRESHOLD );
 #ifdef D_MSAA_ENABLED
     float4 lfDepth = ( IN.hPositionDepthCopy.x / IN.hPositionDepthCopy.y );
     lfDepth.w = lDiffuse.a;

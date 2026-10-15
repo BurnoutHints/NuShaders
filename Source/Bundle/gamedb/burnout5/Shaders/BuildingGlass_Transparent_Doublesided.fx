@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #define USE_HDR_CONSTANTS
 #include "../Include/Constants.fxh"
 #include "../Include/NormalMapping.fxh"
@@ -108,7 +109,7 @@ textureCUBE ReflectionTexture
  string scope = "material";
  string purpose = "none";
 >;
-sampler2D DiffuseTextureSampler : register(s0) 
+SAMPLER_2D(DiffuseTextureSampler, 0, 
 <
  string scope = "material";
  string purpose = "none";
@@ -118,8 +119,8 @@ sampler2D DiffuseTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D SpecularTextureSampler : register(s1) 
+});
+SAMPLER_2D(SpecularTextureSampler, 1, 
 <
  string scope = "material";
  string purpose = "none";
@@ -129,8 +130,8 @@ sampler2D SpecularTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-samplerCUBE ReflectionTextureSampler : register(s2)
+});
+SAMPLER_CUBE(ReflectionTextureSampler, 2,
 <
  string scope = "material";
  string purpose = "none";
@@ -142,7 +143,7 @@ samplerCUBE ReflectionTextureSampler : register(s2)
  MipFilter = Linear;
  AddressU = clamp;
  AddressV = clamp;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -276,7 +277,7 @@ vertexOutputZOnly VS_Main_ZOnly( vertexInputZOnly IN
 float4 PS_Main_ZOnly( vertexOutputZOnly IN ): COLOR
 {
  float4 lDiffuse = tex2D( DiffuseTextureSampler, IN.texCoordDiffuse);
- clip( lDiffuse.a - 0.499999f );
+ clip( lDiffuse.a - ALPHA_TEST_THRESHOLD );
 #ifdef D_MSAA_ENABLED
     float4 lfDepth = ( IN.hPositionDepthCopy.x / IN.hPositionDepthCopy.y );
     lfDepth.w = lDiffuse.a;

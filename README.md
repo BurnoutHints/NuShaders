@@ -38,6 +38,11 @@ python nushaders.py manifest regen --platform x360
 
 `reference import` uses YAP to unpack the bundles into their respective directories.
 
+For Remastered, also extract the stock shader programs (see [below](#remastered-bpr-shader-programs)):
+```bash
+python nushaders.py reference extract
+```
+
 Note: For Xbox 360, only `Breaker` has a resource string table. 
 `manifest regen` will only work when that version of SHADERS.BNDL is provided.
 
@@ -121,12 +126,41 @@ action. Where the copies disagree it records every distinct implementation under
 `conflicts` and marks one `canonical`; `regen` never overwrites a `canonical`
 someone set by hand.
 
+## Remastered (BPR) shader programs
+
+`reference extract` validates every ShaderProgramBuffer pair in `Reference/BPR/SHADERS`
+and writes `Reference/BPR/Extracted/` (gitignored, regenerated whole each run):
+
+| File | What |
+|---|---|
+| `<Fx>.<Technique>.<vs\|ps>.<ID>.dxbc` | the exact shipped DXBC, padding stripped (shared techniques: `<Name>.<vs\|ps>.<ID>`) |
+| `….asm` | fxc disassembly: `$Globals` offsets, resource slots, stage I/O, code |
+| `….hlsl` | a decompile, only if `NUSHADERS_DECOMPILER="<command> {in} {out}"` is set |
+| `manifest.json` | each id's name, primary/secondary pair, hashes, reflection, aliases, the source technique that rebuilds it, and validation results |
+
+`build bpr` then checks every stage that replaces a shipped resource against that
+shipped shader before choosing its primary:
+
+| Rebuilt vs shipped | Primary |
+|---|---|
+| identical interface | stock primary reused, only `dxbcSize` patched |
+| `$Globals` offsets moved; same slots and stage I/O; reads nothing new | generated from reflection |
+| a slot added or moved, stage I/O changed, or a variable read that the shipped shader never read | **refused**: nothing proves the engine supplies it |
+
+A refusal names every difference in `Build/Output/PC_BPR/obj/default/<stage>.pack.log`
+and points at the shipped `.asm`. That list is the porting to-do for the shader.
+`--generate` skips the comparison and generates every primary.
+
 ## Known issues
 
-- **Only 2 shaders currently compile for BPR.** `Specular_1Bit_Doublesided` and
-  `Specular_1Bit_Doublesided_Parallax` are the only ones I got working in BPR, as a 
-  majority of the surfaces I was testing at the time of creating NuShaders used that 
-  shader. Finishing the port just needs figuring out where BPR's registers are for 
-  each shader and adjusting the source accordingly.
+- **The full BPR build has not been run in game yet.** `build bpr` compiles all 232
+  stages; 204 of the 208 that replace a shipped shader reproduce its interface
+  exactly (stock primary reused) and 107 its bytecode. A deploy now replaces every
+  shader, so check in game first. To ship a subset: `clean bpr`, then
+  `build bpr --filter "<file>.fx"`, then `deploy bpr --no-build`.
+- **Four BPR stages still get a generated primary.** `ZOnlyNull` and
+  `ZOnlyOpaqueSingleSided` VS were built by the remaster from a file not in this
+  tree; the hand-ported `Specular_1Bit_Doublesided` VS/PS keep their fixed
+  `SharedGlobals.fxh` layout.
 - **`ZOnly1BitDoubleSided` has three different implementations** across the files 
   its present in, and those variants all share one resource ID.

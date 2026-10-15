@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #define USE_HDR_CONSTANTS
 #include "../Include/Constants.fxh"
 #include "../Include/NormalMapping.fxh"
@@ -81,7 +82,7 @@ textureCUBE ReflectionTexture : diffuse
  string purpose = "none";
  string textureType = "CUBE";
 >;
-samplerCUBE ReflectionTextureSampler : register(s0)
+SAMPLER_CUBE(ReflectionTextureSampler, 0,
 <
  string scope = "material";
  string purpose = "none";
@@ -93,7 +94,7 @@ samplerCUBE ReflectionTextureSampler : register(s0)
  MipFilter = Linear;
  AddressU = clamp;
  AddressV = clamp;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;

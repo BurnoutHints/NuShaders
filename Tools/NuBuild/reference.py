@@ -12,14 +12,25 @@ which platform it is from its .meta.yaml, and puts it where the build looks.
 
     nushaders.py reference status
     nushaders.py reference import "D:/dumps/SHADERS.bndl" --version Breaker
+    nushaders.py reference extract
 
 Supplying the bundles is still the user's job: they come from a game install or
 a devkit, and are not ours to distribute.
+
+`reference extract` turns the imported BPR corpus into evidence you can read:
+every ShaderProgramBuffer's exact DXBC, its fxc disassembly, an optional
+decompile, and Reference/BPR/Extracted/manifest.json tying each one to its
+resource id, .debug.xml name, primary/secondary pair, and the source technique
+that rebuilds it. Validation lives in `nushaders extract-bpr` (C#), which owns
+the format; this side only names, writes and runs tools.
 """
 
+import hashlib
+import json
 import os
+import re
 import shutil
-from collections import namedtuple
+from collections import Counter, defaultdict, namedtuple
 
 from . import context, proc, toolchain
 
@@ -205,4 +216,243 @@ def import_bundle(bundle_path, version=None, force=False):
         else:
             proc.info("")
             proc.fix("next: nushaders.py manifest regen --platform %s" % platform)
+    return context.EXIT_OK
+
+
+# --- extract: the BPR shader programs as readable evidence -------------------
+
+
+# gamedb://burnout5/<dir>/<Fx>.fx.Shader?ID=<n>_<Technique>_<Stage>, or a bare shared "<Name>_<Stage>".
+# Wider than manifest.py's pattern on purpose: the bundle also ships Playground/ shaders.
+_PROGRAM_NAME_RE = re.compile(
+    r"^(?:gamedb://burnout5/(?P<path>[^?]+?)\.fx\.Shader\?ID=\d+_)?(?P<tech>[^/?]+?)_(?P<stage>VertexShader|PixelShader)$")
+
+
+def _family(name, res_id):
+    """(readable file stem, family fields) from a .debug.xml name. The id keeps stems unique."""
+    m = _PROGRAM_NAME_RE.match(name or "")
+    if not m:
+        stem, fields = name or "unresolved", {}
+    else:
+        stage = {"VertexShader": "vs", "PixelShader": "ps"}[m.group("stage")]
+        if m.group("path"):
+            fx_name = m.group("path").rsplit("/", 1)[-1]
+            fields = {"fx": fx_name, "fx_path": m.group("path") + ".fx", "technique": m.group("tech"), "stage": stage}
+            stem = "%s.%s.%s" % (fx_name, m.group("tech"), stage)
+        else:
+            fields = {"shared_name": m.group("tech"), "stage": stage}
+            stem = "%s.%s" % (m.group("tech"), stage)
+    return "%s.%s" % (re.sub(r"[^\w.-]", "_", stem), res_id.upper()), fields
+
+
+def _source_map():
+    """resource id -> the technique in Source/ that rebuilds it, from the committed bpr manifest."""
+    from . import manifest
+
+    try:
+        data = manifest.load("bpr")
+    except proc.StepError:
+        return {}
+
+    def where(fx_name):
+        return context.rel(os.path.join(context.SHADERS_DIR, fx_name + ".fx"))
+
+    out = {}
+    for t in data["targets"]:
+        for stage in ("vs", "ps"):
+            if t.get(stage):
+                out[t[stage]] = {"source": where(t["fx"]), "technique": t["technique"],
+                                 "entry": t.get(stage + "_entry"), "mapping": "manifest"}
+    for s in data["shared"]:
+        for stage in ("vs", "ps"):
+            if s.get(stage):
+                out[s[stage]] = {
+                    "source": where(s["canonical"]), "technique": s["technique"],
+                    "entry": s.get(stage + "_entry"), "shared_name": s["shared_name"],
+                    "mapping": "manifest, canonical of %d copies%s"
+                               % (len(s["sources"]), " that disagree" if s.get("conflicts") else ""),
+                }
+    return out
+
+
+def _disassemble(fxc, dxbc_path, asm_path):
+    if not fxc:
+        return {"status": "not-run", "reason": fxc.what}
+    done = proc.run([fxc, "/nologo", "/dumpbin", "/Fc", asm_path, dxbc_path], check=False)
+    if done.returncode != 0 or not os.path.isfile(asm_path):
+        return {"status": "failed", "reason": ((done.stderr or "") + (done.stdout or "")).strip()[:300]}
+    return {"status": "ok", "path": context.rel(asm_path)}
+
+
+def _decompile(template, dxbc_path, hlsl_path):
+    """Run the user's NUSHADERS_DECOMPILER template; keep its log whether it worked or not."""
+    import shlex
+
+    if not template:
+        return {"status": "not-run", "reason": "no decompiler configured"}
+    argv = [tok.strip('"').replace("{in}", dxbc_path).replace("{out}", hlsl_path)
+            for tok in shlex.split(template, posix=False)]
+    log_path = os.path.splitext(hlsl_path)[0] + ".decompile.log"
+    try:
+        done = proc.run(argv, check=False, timeout=300)
+        log, code = (done.stdout or "") + (done.stderr or ""), done.returncode
+    except proc.StepError as err:
+        log, code = err.message, -1
+    with open(log_path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(log)
+    ok = code == 0 and os.path.isfile(hlsl_path)
+    result = {"status": "ok" if ok else "failed", "log": context.rel(log_path)}
+    if ok:
+        result["path"] = context.rel(hlsl_path)
+    return result
+
+
+def _file(fact):
+    if not fact:
+        return None
+    return {"path": context.rel(fact["path"]), "length": fact["length"], "sha256": fact["sha256"]}
+
+
+def extract(jobs=None):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from . import graph, manifest
+
+    nushaders = toolchain.require(toolchain.nushaders())
+    if not os.path.isdir(context.BPR_SPB_REF):
+        raise proc.StepError(
+            "no BPR corpus at %s" % context.rel(context.BPR_SPB_REF),
+            code=context.EXIT_SKIP,
+            fix='unpack the stock bundle first: nushaders.py reference import "<install>/SHADERS.BNDL"',
+        )
+    fxc = toolchain.pc_fxc()
+    decompiler = toolchain.decompiler()
+    out = context.BPR_EXTRACTED
+
+    proc.step("reference extract bpr")
+    done = proc.run([nushaders, "extract-bpr", "--spb-dir", context.BPR_SPB_REF], read_only=True)
+    report = json.loads(done.stdout)
+    records = report["resources"]
+    if proc.DRY_RUN:
+        proc.info("DRY-RUN: would write %d resources to %s" % (len(records), context.rel(out)))
+        return context.EXIT_OK
+
+    # Regenerated whole every run, so a resource that left the corpus cannot linger here.
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+
+    sources = _source_map()
+    entries = []
+    by_payload = defaultdict(list)
+    for rec in records:
+        res_id = rec["id"].lower()
+        stem, family = _family(rec.get("debug_name"), rec["id"])
+        name = rec.get("debug_name")
+        entry = {
+            "id": res_id,
+            "identity": dict(family, name=name, type=rec.get("debug_type"), aliases=[],
+                             name_status="unresolved" if not name
+                             else "resolved" if rec.get("name_matches_id") else "id-mismatch"),
+            "pair": {"primary": _file(rec.get("primary")), "secondary": _file(rec.get("secondary"))},
+            "evidence": {"dxbc": None, "profile": None, "reflection": rec.get("reflection"),
+                         "disassembly": {"status": "not-run"}, "decompiled": {"status": "not-run"}},
+            "reconstruction": sources.get(res_id),
+            "validation": {"structural": "fail" if rec["errors"] else "pass",
+                           "errors": rec["errors"],
+                           "stock_round_trip": rec["stock_round_trip"],
+                           "primary_describes_dxbc": rec["primary_describes_dxbc"],
+                           "notes": rec["notes"]},
+        }
+        entries.append(entry)
+        if rec["errors"] or not rec.get("dxbc_sha256"):
+            continue  # never hand a payload that failed validation to fxc or a decompiler
+
+        with open(rec["secondary"]["path"], "rb") as handle:
+            dxbc = handle.read(rec["dxbc_length"])
+        if hashlib.sha256(dxbc).hexdigest() != rec["dxbc_sha256"]:
+            raise proc.StepError("%s changed while extracting" % rec["secondary"]["path"],
+                                 fix="re-run once nothing is writing to the corpus")
+        path = os.path.join(out, stem + ".dxbc")
+        with open(path, "wb") as handle:
+            handle.write(dxbc)
+        entry["evidence"]["dxbc"] = {"path": context.rel(path), "length": len(dxbc),
+                                     "sha256": rec["dxbc_sha256"]}
+        entry["evidence"]["profile"] = rec["reflection"]["profile"]
+        by_payload[rec["dxbc_sha256"]].append((stem, entry))
+
+    # Identical payloads are disassembled/decompiled once, then copied under every alias's name so the
+    # folder reads by shader; every alias keeps its own entry and pair.
+    def per_payload(group):
+        base = os.path.join(out, group[0][0])
+        asm = _disassemble(fxc, base + ".dxbc", base + ".asm")
+        hlsl = _decompile(decompiler, base + ".dxbc", base + ".hlsl")
+        ids = [e["id"] for _stem, e in group]
+        for stem, e in group:
+            e["evidence"]["disassembly"] = dict(asm)
+            e["evidence"]["decompiled"] = dict(hlsl)
+            e["identity"]["aliases"] = [i for i in ids if i != e["id"]]
+            for kind, ext in (("disassembly", ".asm"), ("decompiled", ".hlsl")):
+                if stem != group[0][0] and e["evidence"][kind].get("path"):
+                    shutil.copyfile(base + ext, os.path.join(out, stem + ext))
+                    e["evidence"][kind]["path"] = context.rel(os.path.join(out, stem + ext))
+
+    with ThreadPoolExecutor(max_workers=jobs or graph.default_jobs()) as pool:
+        list(pool.map(per_payload, by_payload.values()))
+
+    failed = [e for e in entries if e["validation"]["structural"] == "fail"]
+    named = Counter(e["identity"]["name_status"] for e in entries)
+    unmapped = [e for e in entries if not e["reconstruction"]]
+    asm_status = Counter(e["evidence"]["disassembly"]["status"] for e in entries)
+    hlsl_status = Counter(e["evidence"]["decompiled"]["status"] for e in entries)
+    summary = {
+        "resources": len(entries),
+        "unique_dxbc": len(by_payload),
+        "structural_failures": len(failed),
+        "stock_round_trip": dict(Counter(e["validation"]["stock_round_trip"] for e in entries)),
+        "primary_describes_dxbc": dict(Counter(e["validation"]["primary_describes_dxbc"] for e in entries)),
+        "names": dict(named),
+        "unmapped_to_source": len(unmapped),
+        "disassembly": dict(asm_status),
+        "decompiled": dict(hlsl_status),
+    }
+    doc = {
+        "schema": 1,
+        "platform": "bpr",
+        "generated_from": {"spb_dir": context.rel(report["spb_dir"]),
+                           "debug_xml": context.rel(report["debug_xml"]) if report.get("debug_xml") else None,
+                           "source_map": context.rel(manifest.manifest_path("bpr"))},
+        "hash_algorithm": "sha256 over the exact, unpadded DXBC",
+        "decompiler": decompiler or None,
+        "summary": summary,
+        "resources": entries,
+    }
+    manifest_file = os.path.join(out, "manifest.json")
+    with open(manifest_file, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(manifest.dumps(doc))
+
+    proc.info("%d resources, %d unique DXBC payloads -> %s"
+              % (len(entries), len(by_payload), context.rel(out)))
+    proc.info("validation: %d pass, %d fail   stock round-trip %s   primary describes DXBC %s"
+              % (len(entries) - len(failed), len(failed),
+                 summary["stock_round_trip"], summary["primary_describes_dxbc"]))
+    proc.info("names: %s" % dict(named))
+    proc.info("source: %d mapped to a technique, %d with no source in the tree"
+              % (len(entries) - len(unmapped), len(unmapped)))
+    proc.info("disassembly: %s   decompile: %s" % (dict(asm_status), dict(hlsl_status)))
+    if not fxc:
+        proc.warn("no fxc, so no disassembly")
+        proc.fix(fxc.fix)
+    if not decompiler:
+        proc.warn("decompile not run: no decompiler configured")
+        proc.fix(decompiler.fix)
+    proc.info("wrote %s" % context.rel(manifest_file))
+
+    if failed:
+        for e in failed[:10]:
+            proc.info("  FAIL %s: %s" % (e["id"], "; ".join(e["validation"]["errors"])))
+        raise proc.StepError(
+            "%d of %d resources failed validation" % (len(failed), len(entries)),
+            fix="see validation.errors in %s; the outputs for the rest are usable"
+                % context.rel(manifest_file),
+        )
     return context.EXIT_OK

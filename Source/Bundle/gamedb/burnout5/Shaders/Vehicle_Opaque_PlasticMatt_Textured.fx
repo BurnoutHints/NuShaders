@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #define SHADOW_APPLY_Z_BIAS
 #define SHADOW_Z_BIAS_VALUE 0.0001
@@ -81,7 +82,7 @@ texture2D DiffuseTexture
 <
     string scope = "material";
 >;
-sampler DiffuseTextureSampler : register(s0)
+SAMPLER_2D_UNTYPED(DiffuseTextureSampler, 0,
 <
     string scope = "material";
 > = sampler_state
@@ -90,12 +91,12 @@ sampler DiffuseTextureSampler : register(s0)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 texture2D AoMapTexture
 < 
     string scope = "material";
 >;
-sampler AoMapTextureSampler : register(s3)
+SAMPLER_2D_UNTYPED(AoMapTextureSampler, 3,
 < 
     string scope = "material";
 > = sampler_state
@@ -104,12 +105,12 @@ sampler AoMapTextureSampler : register(s3)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 texture CrumpleTexture
 <
     string scope = "material";
 >;
-sampler CrumpleTextureSampler : register(s2)
+SAMPLER_2D_UNTYPED(CrumpleTextureSampler, 2,
 <
     string scope = "material";
 > = sampler_state
@@ -118,12 +119,12 @@ sampler CrumpleTextureSampler : register(s2)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 texture ScratchTexture
 <
     string scope = "material";
 >;
-sampler ScratchTextureSampler : register(s5)
+SAMPLER_2D_UNTYPED(ScratchTextureSampler, 5,
 <
     string scope = "material";
 > = sampler_state
@@ -132,7 +133,7 @@ sampler ScratchTextureSampler : register(s5)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 struct DamagedInput
 {
     float3  position                : POSITION;
@@ -140,7 +141,7 @@ struct DamagedInput
         float3  tangent                 : TANGENT;
     float2  texCoordDiffuse         : TEXCOORD0;
     float2  texCoordScratch         : TEXCOORD1;
-    float4  boneIndices             : BLENDINDICES;
+    BONE_INDICES4  boneIndices             : BLENDINDICES;
     float3  boneWeights             : BLENDWEIGHT;
 };
 struct DamagedOutput
@@ -394,7 +395,7 @@ technique ZOnlyOpaqueSingleSided
 }
 struct vertexInputZOnlySkinned {
     float3 position        : POSITION;
-    float4 boneIndices    : BLENDINDICES;
+    BONE_INDICES4 boneIndices    : BLENDINDICES;
     float3 boneWeights    : BLENDWEIGHT;
 };
 struct vertexOutputZOnlySkinned {

@@ -77,7 +77,11 @@ BPR = Platform(
     ps_target="ps_5_0",
     effect_target=None,  # SM5 has no effect profile; fx_2_0 is DX9-only
     base_defines=("D_PLATFORM_BPR",),
-    extra_args=(),
+    # The flags every shipped BPR shader was built with (RDEF flags 0x1108, fxc 10.1):
+    # /Gec backwards compatibility (POSITION -> SV_POSITION, loose globals -> $Globals),
+    # /Zpr row-major matrices, /Op no preshader. Matching them is what lets the
+    # TUB-era source reproduce the shipped interface instead of approximating it.
+    extra_args=("/Gec", "/Zpr", "/Op"),
     variants=(Variant("default", ()),),
     out_root=_out("PC_BPR"),
     spb_dir=_out("PC_BPR", "ShaderProgramBuffer"),

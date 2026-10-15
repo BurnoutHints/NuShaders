@@ -201,7 +201,7 @@
       "canonical": "BuildingGlass_Transparent_Doublesided",
       "conflicts": [
         {
-          "signature": "f3de4b7fddffe0b2",
+          "signature": "47974d7e7b02cab1",
           "sources": [
             "BuildingGlass_Transparent_Doublesided",
             "Diffuse_1Bit_Doublesided",
@@ -214,13 +214,13 @@
           ]
         },
         {
-          "signature": "99882989437cb4c7",
+          "signature": "cb610555c1a03545",
           "sources": [
             "Specular_1Bit_Doublesided"
           ]
         },
         {
-          "signature": "186504c8499ee161",
+          "signature": "f2ce135f62de5f89",
           "sources": [
             "Specular_1Bit_Doublesided_Parallax"
           ]
@@ -275,7 +275,7 @@
       "vs_entry": "VS_Main_ZOnly"
     },
     {
-      "canonical": "Diffuse_Greyscale_Doublesided",
+      "canonical": "Specular_Greyscale_Doublesided",
       "ps": "9a5f0786",
       "ps_entry": "PS_Main_ZOnly",
       "shared_name": "ZOnlyGreyscaleDoubleSided",
@@ -288,7 +288,7 @@
       "vs_entry": "VS_Main_ZOnly"
     },
     {
-      "canonical": "Diffuse_Greyscale_Singlesided",
+      "canonical": "Specular_Greyscale_Singlesided",
       "ps": "a1e70a82",
       "ps_entry": "PS_Main_ZOnly",
       "shared_name": "ZOnlyGreyscaleSingleSided",
@@ -315,7 +315,7 @@
       "vs_entry": "VS_Main_ZOnly"
     },
     {
-      "canonical": "Cable_GreyScale_Doublesided",
+      "canonical": "Diffuse_Opaque_Doublesided",
       "ps": "41c53ac0",
       "ps_entry": "PS_Main_ZOnly",
       "shared_name": "ZOnlyOpaqueDoubleSided",

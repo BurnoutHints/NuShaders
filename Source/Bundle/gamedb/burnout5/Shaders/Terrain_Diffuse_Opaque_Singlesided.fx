@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/Shadow.fxh"
 #include "../Include/Fog.fxh"
@@ -99,7 +100,7 @@ texture2D HorizontalFaceTexture
  string scope = "material";
  string purpose = "none";
 >;
-sampler2D VerticalFaceTextureSampler : register(s0) 
+SAMPLER_2D(VerticalFaceTextureSampler, 0, 
 <
  string scope = "material";
  string purpose = "none";
@@ -109,8 +110,8 @@ sampler2D VerticalFaceTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D SlantedFaceTextureSampler : register(s1) 
+});
+SAMPLER_2D(SlantedFaceTextureSampler, 1, 
 <
  string scope = "material";
  string purpose = "none";
@@ -120,8 +121,8 @@ sampler2D SlantedFaceTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D HorizontalFaceTextureSampler : register(s2) 
+});
+SAMPLER_2D(HorizontalFaceTextureSampler, 2, 
 <
  string scope = "material";
  string purpose = "none";
@@ -131,7 +132,21 @@ sampler2D HorizontalFaceTextureSampler : register(s2)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
+#ifdef D_PLATFORM_BPR
+// Remastered: the vertical/slanted blend, sampling the slanted map only when it shows.
+float3 SteepFaces_BPR( float3 baseTex, float2 uv, float slantLerp )
+{
+    float3 faces;
+    if ( slantLerp >= 1.0 )
+        faces = tex2D( SlantedFaceTextureSampler, uv * slantedFaceTile ).rgb;
+    else if ( slantLerp > 0.0 )
+        faces = lerp( baseTex, tex2D( SlantedFaceTextureSampler, uv * slantedFaceTile ).rgb, slantLerp );
+    else
+        faces = baseTex;
+    return faces;
+}
+#endif
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -145,6 +160,8 @@ struct vertexOutput {
     float3 WorldSpaceNormal   : TEXCOORD4;
 #ifdef D_MRT
     float2 hPositionDepthCopy       : TEXCOORD5;
+#elif defined(D_PLATFORM_BPR)
+    float3 ReflectionVector         : TEXCOORD5;    // Remastered: terrain specular
 #endif
 #if defined(D_OREN_NAYAR) || defined(D_GGX_SPECULAR)
     float3 WorldNormal              : TEXCOORD6;
@@ -174,6 +191,9 @@ vertexOutput VS_Main(vertexInput IN
     OUT.IndirectColourAndKey.w = dot( WorldSpaceNormal, -KeyLightDirection ); 
     float3 lEyeToVertex    = ViewPosition.xyz - WorldSpacePosition;
     OUT.texCoordDiffuseAndFog.z = CalculateScattering( length( lEyeToVertex ) );
+#ifdef D_PLATFORM_BPR
+    OUT.ReflectionVector = ( WorldSpaceNormal * ( 2.0f * dot( lEyeToVertex, WorldSpaceNormal ) ) ) - lEyeToVertex;
+#endif
     CALC_SHADOWMAP_INTERPOLATORS3( WorldSpacePosition, OUT.hPosition.w );
 #if defined(D_OREN_NAYAR) || defined(D_GGX_SPECULAR)
     OUT.WorldNormal = WorldSpaceNormal;
@@ -189,6 +209,29 @@ void PS_Main( in  vertexOutput IN,
 float4 PS_Main( vertexOutput IN ) : COLOR
 #endif
 {
+#ifdef D_PLATFORM_BPR
+    // Remastered: sample only the faces that contribute, and add a key-light specular on
+    // horizontal faces, masked by a levels curve (in 222, gamma 0.43) of the base texture.
+    float2 uv = IN.texCoordDiffuseAndFog.xy;
+    float3 baseTex = tex2D( VerticalFaceTextureSampler, uv * verticalFaceTile ).rgb;
+    float  flatLerp = smoothstep(horizontalFacelimit, 1.0, float(IN.WorldSpaceNormal.y));
+    float3 verticalFaceTexture;
+    if ( flatLerp >= 1.0 )
+    {
+        verticalFaceTexture = tex2D( HorizontalFaceTextureSampler, uv * horizontalFaceTile ).rgb * materialDiffuse.rgb;
+    }
+    else
+    {
+        float slantLerp = smoothstep(verticalFacelimit, slantedFacelimit, float(IN.WorldSpaceNormal.y));
+        if ( flatLerp > 0.0 )
+            verticalFaceTexture = lerp( SteepFaces_BPR( baseTex, uv, slantLerp ), tex2D( HorizontalFaceTextureSampler, uv * horizontalFaceTile ).rgb * materialDiffuse.rgb, flatLerp );
+        else
+            verticalFaceTexture = SteepFaces_BPR( baseTex, uv, slantLerp );
+    }
+    float  wetMask  = flatLerp * ( pow( min( max( dot( baseTex, float3( 1, 1, 1 ) ) / 3.0, 0.0 ) * ( 255.0 / 222.0 ), 1.0 ), 1.0 / 0.43 ) * 1.0882354 );
+    float3 specular = KeyLightColour * ( pow( saturate( dot( normalize( IN.ReflectionVector ), -KeyLightDirection ) ), 12.0 ) * wetMask );
+    specular *= ( max( verticalFaceTexture.r, verticalFaceTexture.g ) - 0.5 ) * 0.5 + 0.5;
+#else
     float3 baseTex = tex2D( VerticalFaceTextureSampler, IN.texCoordDiffuseAndFog.xy * verticalFaceTile ).rgb;
  float3 slantedFaceTexture = tex2D( SlantedFaceTextureSampler, IN.texCoordDiffuseAndFog.xy * slantedFaceTile ).rgb;
  float3 horizontalFaceTexture = tex2D( HorizontalFaceTextureSampler, IN.texCoordDiffuseAndFog.xy * horizontalFaceTile ).rgb * materialDiffuse.rgb;
@@ -198,6 +241,7 @@ float4 PS_Main( vertexOutput IN ) : COLOR
  verticalFaceTexture = lerp(baseTex, slantedFaceTexture, lerpValue);
  lerpValue = smoothstep(horizontalFacelimit, 1.0, float(IN.WorldSpaceNormal.y));
  verticalFaceTexture = lerp(verticalFaceTexture, horizontalFaceTexture, lerpValue);
+#endif
  float lShadowModulation = CALC_SHADOW_FACTOR_3( (float)IN.IndirectColourAndKey.w );
 #ifdef D_OREN_NAYAR
     float  lDirectLightFactor   = ComputeOrenNayarDiffuse( normalize(IN.WorldNormal), (float3)-KeyLightDirection, normalize(IN.ViewDirection), 0.1 ) * lShadowModulation;
@@ -207,7 +251,11 @@ float4 PS_Main( vertexOutput IN ) : COLOR
     float3 lDirectLightColour   = float3( KeyLightColour );
     float3 lIndirectLightColour = float3( IN.IndirectColourAndKey.xyz );
     float3 lLightColour         = ( lIndirectLightColour + lDirectLightColour * lDirectLightFactor );
+#ifdef D_PLATFORM_BPR
+    float3 lFinalColour         = (verticalFaceTexture * lLightColour) + specular;
+#else
     float3 lFinalColour         = (verticalFaceTexture * lLightColour);
+#endif
     lFinalColour = lerp( lFinalColour.rgb, float3(FogColourPlusWhiteLevel.rgb), float(IN.texCoordDiffuseAndFog.z) );
 #ifdef D_MRT
     oColour0 = float4(lFinalColour, 1);

@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/Shadow.fxh"
 #include "../Include/Fog.fxh"
@@ -66,7 +67,7 @@ texture2D SpecularTexture
  string scope = "material";
  string purpose = "none";
 >;
-sampler2D DiffuseTextureSampler : register(s0) 
+SAMPLER_2D(DiffuseTextureSampler, 0, 
 <
  string scope = "material";
  string purpose = "none";
@@ -76,8 +77,8 @@ sampler2D DiffuseTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D SpecularTextureSampler : register(s1) 
+});
+SAMPLER_2D(SpecularTextureSampler, 1, 
 <
  string scope = "material";
  string purpose = "none";
@@ -87,7 +88,7 @@ sampler2D SpecularTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -119,7 +120,7 @@ vertexOutput VS_Main(vertexInput IN
 {
     vertexOutput OUT;
      float3 WorldSpacePosition = mul( float4( IN.position, 1.0f ), world ).xyz;           
-    float3 WorldSpaceNormal  = normalize( mul( IN.normal, (float3x3)world ) );             
+    float3 WorldSpaceNormal  = normalize( mul( SAFE_NORMAL( IN.normal ), (float3x3)world ) );             
     OUT.hPosition    = TransformWorldToProjection( WorldSpacePosition );
 #ifdef D_MRT
     OUT.hPositionDepthCopy = OUT.hPosition.zw;

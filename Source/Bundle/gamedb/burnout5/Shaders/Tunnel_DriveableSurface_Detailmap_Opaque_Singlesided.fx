@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/Shadow.fxh"
 #include "../Include/Fog.fxh"
@@ -63,7 +64,7 @@ texture2D detailMap
  string scope   = "material";
  string purpose = "none";
 >;
-sampler2D baseMapSampler : register(s0)
+SAMPLER_2D(baseMapSampler, 0,
 <
  string scope   = "material";
  string purpose = "none";
@@ -73,8 +74,8 @@ sampler2D baseMapSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D detailMapSampler : register(s1)
+});
+SAMPLER_2D(detailMapSampler, 1,
 <
  string scope   = "material";
  string purpose = "none";
@@ -84,7 +85,7 @@ sampler2D detailMapSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;

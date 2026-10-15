@@ -177,7 +177,7 @@ vertexOutputZOnly VS_Main_ZOnly( vertexInputZOnly IN
 float4 PS_Main_ZOnly( vertexOutputZOnly IN ): COLOR_OUT(0)
 {
  float4 lDiffuse = SAMPLE2D( DiffuseTextureSampler, IN.texCoordDiffuse);
- clip( lDiffuse.a - 0.499999f );
+ clip( lDiffuse.a - ALPHA_TEST_THRESHOLD );
 #ifdef D_MSAA_ENABLED
     float4 lfDepth = ( IN.hPositionDepthCopy.x / IN.hPositionDepthCopy.y );
     lfDepth.w = lDiffuse.a;

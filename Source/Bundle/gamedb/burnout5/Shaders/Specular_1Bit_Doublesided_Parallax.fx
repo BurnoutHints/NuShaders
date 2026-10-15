@@ -301,7 +301,7 @@ void PS_Main_ZOnly( in vertexOutputZOnly IN, in VFACE_TYPE lfFace : VFACE_SEM,
     float2 lUV          = ParallaxOcclusion( TEX2D_ARG(HEIGHT_SAMPLER), IN.texCoordDiffuse, mul( lTBN, lEyeDir ), (float)ParallaxScale, lHitDepth );
 
     float4 lDiffuse = SAMPLE2D( DiffuseTextureSampler, lUV );
-    clip( lDiffuse.a - 0.499999f );
+    clip( lDiffuse.a - ALPHA_TEST_THRESHOLD );
 
     float  lNdotV    = max( dot( lEyeDir, lWorldNormal ), 0.1 );
     float3 lHitWorld = lWorldPos - lEyeDir * ( lHitDepth * (float)ParallaxDepthScale / lNdotV );
@@ -318,7 +318,7 @@ void PS_Main_ZOnly( in vertexOutputZOnly IN, in VFACE_TYPE lfFace : VFACE_SEM,
 float4 PS_Main_ZOnly( vertexOutputZOnly IN ): COLOR_OUT(0)
 {
     float4 lDiffuse = SAMPLE2D( DiffuseTextureSampler, IN.texCoordDiffuse);
-    clip( lDiffuse.a - 0.499999f );
+    clip( lDiffuse.a - ALPHA_TEST_THRESHOLD );
 #ifdef D_MSAA_ENABLED
     float4 lfDepth = ( IN.hPositionDepthCopy.x / IN.hPositionDepthCopy.y );
     lfDepth.w = lDiffuse.a;

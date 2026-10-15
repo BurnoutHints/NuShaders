@@ -21,11 +21,12 @@ What each platform actually checks, and what it does not
          bundle. Byte equality is required here.
 
          `--generate` instead builds the primary from DXBC reflection alone, the
-         path used for a brand-new shader. That is inherently approximate — the
-         reserved gap and parts of the descriptor are not recoverable from
-         reflection, which is why --stock-primary-dir exists at all — so
-         divergence is REPORTED, not failed. Only a crash or a size-zero output
-         is a failure in that mode.
+         path used when a shader's $Globals layout has moved. It must reproduce
+         the shipped primary except for bytes nothing in the DXBC predicts: the
+         two runtime pointers, the stray upper bytes of bindingCount, and the
+         gap (the engine's $Globals copy, which 76 shipped primaries fill with
+         leftover memory from Criterion's tool). Those are masked; anything
+         else that differs is a failure.
 
 A skip means the corpus is not checked out (Reference/**/SHADERS/* is gitignored).
 """
@@ -116,6 +117,24 @@ def _x360_case(nushaders, res_id, primary_path, secondary_path, scratch, _genera
                                                   _describe_diff(secondary, got_sec))
 
 
+def _bpr_unpredictable(primary):
+    """[start, end) ranges of a BPR primary that no DXBC determines (see the module docstring)."""
+    ranges = [(0x04, 0x08), (0x1D, 0x20)]
+    count = primary[0x1C]
+    if any(primary[0x54 + 8 * i + 5] == 0x1A for i in range(count)):  # $Globals bound -> descriptor
+        desc = (0x54 + 8 * count + 15) & ~15
+        gap = struct.unpack_from("<I", primary, desc + 0x0C)[0]
+        ranges += [(desc + 0x14, desc + 0x18), (desc + 0x30, desc + 0x30 + gap)]
+    return ranges
+
+
+def _masked(data, ranges):
+    out = bytearray(data)
+    for start, end in ranges:
+        out[start:min(end, len(out))] = bytes(max(0, min(end, len(out)) - start))
+    return bytes(out)
+
+
 def _bpr_case(nushaders, res_id, primary_path, secondary_path, scratch, generate):
     primary = _read(primary_path)
     secondary = _read(secondary_path)
@@ -146,18 +165,13 @@ def _bpr_case(nushaders, res_id, primary_path, secondary_path, scratch, generate
                                                    (done.stderr or "").strip()[:160])
 
     got_pri, got_sec = _outputs(out_dir, res_id)
+    if generate:
+        mask = _bpr_unpredictable(primary)
+        primary, got_pri = _masked(primary, mask), _masked(got_pri, mask)
     if got_pri == primary and got_sec == secondary:
         return "pass", None
-
-    detail = "primary[%s] secondary[%s]" % (_describe_diff(primary, got_pri),
-                                            _describe_diff(secondary, got_sec))
-    if generate:
-        # Expected: reflection cannot recover the reserved gap or every
-        # descriptor field. Report how far off we are, do not fail.
-        if not got_pri:
-            return "fail", "generated an empty primary"
-        return "diverged", detail
-    return "fail", detail
+    return "fail", "primary[%s] secondary[%s]" % (_describe_diff(primary, got_pri),
+                                                  _describe_diff(secondary, got_sec))
 
 
 def _corpus_dirs(platform, against, version):
@@ -207,9 +221,8 @@ def verify(platform, against=None, version="Breaker", jobs=None, limit=None,
     mode = "generate from reflection" if generate else "reproduce shipped bytes"
     proc.step("verify %s: %d resource pairs (%s)" % (platform, len(work), mode))
 
-    counts = {"pass": 0, "fail": 0, "skip": 0, "diverged": 0}
+    counts = {"pass": 0, "fail": 0, "skip": 0}
     failures = []
-    diverged = []
     lock = threading.Lock()
 
     def run_one(item):
@@ -222,25 +235,13 @@ def verify(platform, against=None, version="Breaker", jobs=None, limit=None,
             counts[outcome] += 1
             if outcome == "fail":
                 failures.append("%s/%s: %s" % (label, res_id, detail))
-            elif outcome == "diverged":
-                diverged.append("%s/%s: %s" % (label, res_id, detail))
 
     with ThreadPoolExecutor(max_workers=jobs or graph.default_jobs()) as pool:
         list(pool.map(run_one, work))
 
     proc.info("")
     summary = "pass %d  fail %d  skip %d" % (counts["pass"], counts["fail"], counts["skip"])
-    if generate:
-        summary += "  diverged %d" % counts["diverged"]
     proc.info("%s  (of %d)" % (summary, len(work)))
-
-    if diverged:
-        proc.info("")
-        proc.info("diverged from stock (expected for generate mode):")
-        for line in sorted(diverged)[:10]:
-            proc.info("  " + line)
-        if len(diverged) > 10:
-            proc.info("  ... and %d more" % (len(diverged) - 10))
 
     if failures:
         proc.info("")
@@ -255,7 +256,7 @@ def verify(platform, against=None, version="Breaker", jobs=None, limit=None,
                 "round-trip tests in NuShaders.Tests",
         )
 
-    if counts["pass"] == 0 and counts["diverged"] == 0:
+    if counts["pass"] == 0:
         raise proc.StepError(
             "nothing verified (every case skipped)",
             code=context.EXIT_SKIP,

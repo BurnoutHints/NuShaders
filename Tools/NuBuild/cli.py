@@ -83,7 +83,10 @@ def build_parser():
     b.add_argument("--all-variants", action="store_true",
                    help="build every variant in the platform's matrix, not just one")
     b.add_argument("--stock-primary-dir", metavar="DIR",
-                   help="BPR: reuse stock primaries instead of generating them")
+                   help="BPR: where the shipped pairs are (default: Reference/BPR/SHADERS); "
+                        "a stock primary is reused only once verified against the rebuilt shader")
+    b.add_argument("--generate", action="store_true",
+                   help="BPR: build every primary from reflection instead of reusing verified stock ones")
     b.set_defaults(_handler=_handle_build)
 
     vf = _sub(verbs, "verify", "byte-compare our packer against the shipped resources")
@@ -111,6 +114,9 @@ def build_parser():
     ri.add_argument("--version", choices=context.X360_VERSIONS,
                     help="which X360 game build this is (required for X360)")
     ri.add_argument("--force", action="store_true", help="replace an existing corpus")
+    rx = rf_sub.add_parser("extract", help="BPR: exact DXBC, disassembly and a manifest for every shader program")
+    _add_global_flags(rx)
+    rx.add_argument("-j", dest="jobs", type=int, metavar="N")
     rf.set_defaults(_handler=_handle_reference)
 
     # --- bundle / deploy / autotest / config ---------------------------------
@@ -223,6 +229,7 @@ def _handle_build(args):
         stock_primary_dir=args.stock_primary_dir,
         effects=args.effects,
         all_variants=args.all_variants,
+        generate=args.generate,
     )
 
 
@@ -248,6 +255,8 @@ def _handle_reference(args):
                              fix="try: nushaders.py reference status")
     if action == "status":
         return reference.status()
+    if action == "extract":
+        return reference.extract(args.jobs)
     return reference.import_bundle(args.bundle, args.version, args.force)
 
 

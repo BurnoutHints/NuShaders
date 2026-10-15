@@ -14,6 +14,14 @@
 //  system-value semantics. The only real *logic* difference (shadow compare)
 //  lives in Shadow.fxh.
 //
+//  Most shaders reach BPR the way the remaster itself did: the TUB-era source,
+//  loose globals and DX9 sampling intact, compiled /Gec /Zpr /Op (the flags in
+//  every shipped RDEF). $Globals then lays out in declaration order, which is
+//  why this header must be included first (sampleCoverage leads every shipped
+//  layout). Sampler declarations go through SAMPLER_2D / SAMPLER_CUBE, and only
+//  the remaster's own changes carry a D_PLATFORM_BPR branch; everything else
+//  expands identically on SM3.
+//
 //  Global-constant macros take the constant's register on BOTH platforms as
 //  full tokens (e.g. c0 / c5) to avoid preprocessor token-pasting pitfalls.
 //  Texture macros take a numeric slot (paste-friendly: t##slot / s##slot).
@@ -41,6 +49,12 @@
 // Textures / samplers (BPR pairs a SamplerState "name" with Texture2D "nameTexture").
 #define DECL_TEX2D(name, slot)    Texture2D   name##Texture : register(t##slot); SamplerState name : register(s##slot)
 #define DECL_TEXCUBE(name, slot)  TextureCube name##Texture : register(t##slot); SamplerState name : register(s##slot)
+// One sampler declaration for every platform: name and slot once, then the SM3
+// annotations + sampler_state verbatim. BPR drops that block: on DX11 the engine
+// binds the sampler state itself (from TextureState), so only the pair remains.
+#define SAMPLER_2D(name, slot, sm3state)    DECL_TEX2D(name, slot)
+#define SAMPLER_CUBE(name, slot, sm3state)  DECL_TEXCUBE(name, slot)
+#define SAMPLER_2D_UNTYPED(name, slot, sm3state)  DECL_TEX2D(name, slot)
 #define SAMPLE2D(name, uv)         name##Texture.Sample(name, uv)
 #define SAMPLE2D_BIAS(name, uv, b) name##Texture.SampleBias(name, uv, b)
 #define SAMPLE2D_LOD(name, uv, lod) name##Texture.SampleLevel(name, uv, lod)
@@ -52,6 +66,29 @@
 #define TEXCUBE_PARAM(name)        TextureCube name##Texture, SamplerState name
 #define TEXCUBE_ARG(name)          name##Texture, name
 
+// TUB-era shaders keep their DX9 sampling calls; only their sampler declarations
+// have a BPR alternative (DECL_TEX2D / DECL_TEXCUBE). Every shipped BPR shader
+// pairs sampler X at sN with texture XTexture at tN, which is what these resolve to.
+#define tex2D(s, uv)               s##Texture.Sample(s, uv)
+#define tex2Dbias(s, uvb)          s##Texture.SampleBias(s, (uvb).xy, (uvb).w)
+#define texCUBE(s, dir)            s##Texture.Sample(s, dir)
+
+#ifndef USE_SHARED_GLOBALS
+// The remaster prepends this to every shader, so it is the first member of every
+// shipped $Globals (offset 0). The 1-bit alpha shaders read it. Platform.fxh must
+// therefore be the first include of a shader that declares loose globals.
+float4 sampleCoverage;
+#endif
+
+// DX11 has no fixed-function alpha test. The remaster replaced it (and the 0.499999
+// threshold of the ZOnly passes) with this, in all 17 shipped 1-bit pixel shaders:
+// alpha > ~0 while the engine runs alpha-to-coverage (sampleCoverage.x != 0), else > 0.5.
+#define ALPHA_TEST_THRESHOLD       ( sampleCoverage.x != 0 ? 0.000001 : 0.499999 )
+#define ALPHA_TEST(alpha)          clip( (alpha) - ALPHA_TEST_THRESHOLD )
+
+// Remastered fix in 7 shipped vertex shaders: a zero vertex normal would normalize to NaN.
+#define SAFE_NORMAL(n)             ( all( (n) == 0 ) ? float3( 0, 1, 0 ) : (n) )
+
 // Semantics
 #define VPOS_OUT       SV_Position
 #define COLOR_OUT(n)   SV_Target##n
@@ -59,6 +96,8 @@
 #define DEPTH_OUT      SV_DepthGreaterEqual
 #define VFACE_TYPE     bool
 #define VFACE_SEM      SV_IsFrontFace
+// The BPR vehicle vertex format feeds BLENDINDICES as SINT; D3D11 needs the VS input to match.
+#define BONE_INDICES4  int4
 // FACE_IS_FRONT mirrors the SM3 `(lfFace < 0)` test (which is the FRONT case in
 // Burnout's X360 VFACE polarity). On DX11 the front face is SV_IsFrontFace == true,
 // i.e. the bool itself.
@@ -91,6 +130,12 @@
 
 #define DECL_TEX2D(name, slot)    sampler2D   name : register(s##slot)
 #define DECL_TEXCUBE(name, slot)  samplerCUBE name : register(s##slot)
+// sm3state is the declaration's annotations + sampler_state, passed through untouched:
+// TUB's D3DX effects apply exactly the states listed and read the scope annotations.
+#define SAMPLER_2D(name, slot, sm3state)    sampler2D   name : register(s##slot) sm3state
+#define SAMPLER_CUBE(name, slot, sm3state)  samplerCUBE name : register(s##slot) sm3state
+// Some TUB samplers are declared as plain `sampler`; the effect records that type, so keep it.
+#define SAMPLER_2D_UNTYPED(name, slot, sm3state)  sampler name : register(s##slot) sm3state
 #define SAMPLE2D(name, uv)         tex2D(name, uv)
 #define SAMPLE2D_BIAS(name, uv, b) tex2Dbias(name, float4((uv), 0, (b)))
 #define SAMPLE2D_LOD(name, uv, lod) tex2Dlod(name, float4((uv), 0, (lod)))
@@ -108,6 +153,12 @@
 #define DEPTH_OUT      DEPTH
 #define VFACE_TYPE     float
 #define VFACE_SEM      VFACE
+#define BONE_INDICES4  float4
+
+// SM3 keeps the technique's AlphaTestEnable, so ALPHA_TEST adds nothing here.
+#define ALPHA_TEST_THRESHOLD       0.499999f
+#define ALPHA_TEST(alpha)
+#define SAFE_NORMAL(n)             n
 #define FACE_IS_FRONT(f) ((f) < 0.0)
 
 #endif

@@ -10,6 +10,7 @@ try
     return args[0] switch
     {
         "pack-bpr" => PackBPRCommand.Run(new ArgMap(args, 1)),
+        "extract-bpr" => ExtractBPRCommand.Run(new ArgMap(args, 1)),
         "pack-bpr-shader" => PackBPRShaderCommand.Run(new ArgMap(args, 1)),
         "pack-x360" => PackX360Command.Run(new ArgMap(args, 1)),
         "pack-texture" => PackTextureCommand.Run(new ArgMap(args, 1)),
@@ -27,7 +28,7 @@ catch (Exception ex)
 static int Usage()
 {
     Console.Error.WriteLine("nushaders <command> [options]");
-    Console.Error.WriteLine("commands: pack-bpr  pack-bpr-shader  pack-x360  pack-texture  material  analyze");
+    Console.Error.WriteLine("commands: pack-bpr  extract-bpr  pack-bpr-shader  pack-x360  pack-texture  material  analyze");
     return 1;
 }
 

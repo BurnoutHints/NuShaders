@@ -39,6 +39,9 @@ X360_SHADERS_ROOT = os.path.join(REFERENCE_DIR, "360", "Shaders")
 X360_VERSIONS = ("Breaker", "1.6", "1.8")
 X360_REF_DEFAULT = os.path.join(X360_SHADERS_ROOT, "Breaker", "SHADERS")
 BPR_REF = os.path.join(REFERENCE_DIR, "BPR", "SHADERS")
+BPR_SPB_REF = os.path.join(BPR_REF, "ShaderProgramBuffer")
+# `reference extract` output: exact DXBC, disassembly, decompiles, manifest.json. Generated, gitignored.
+BPR_EXTRACTED = os.path.join(REFERENCE_DIR, "BPR", "Extracted")
 RESOURCE_DB = os.path.join(REFERENCE_DIR, "ResourceDB.json")
 
 

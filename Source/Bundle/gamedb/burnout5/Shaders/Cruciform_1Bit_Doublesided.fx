@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/Fog.fxh"
 #include "../Include/Irradiance.fxh"
@@ -36,7 +37,7 @@ texture2D DiffuseTexture : diffuse
  string scope = "material";
  string purpose = "none";
 >;
-sampler2D DiffuseTextureSampler : register(s0)
+SAMPLER_2D(DiffuseTextureSampler, 0,
 <
  string scope = "material";
  string purpose = "none";
@@ -48,7 +49,7 @@ sampler2D DiffuseTextureSampler : register(s0)
  MipFilter = Linear;
  AddressU = clamp;
  AddressV = clamp;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -102,6 +103,7 @@ float4 PS_Main( vertexOutput IN ) : COLOR
 #endif
 {
  float4 diffuseTexture = tex2D( DiffuseTextureSampler, IN.texCoordDiffuseAndFog.xy );
+ ALPHA_TEST( diffuseTexture.a );
 #ifdef D_OREN_NAYAR
     float  lDirectLightFactor   = ComputeOrenNayarDiffuse( normalize(IN.WorldNormal), (float3)-KeyLightDirection, normalize(IN.ViewDirection), 0.1 );
 #else

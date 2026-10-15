@@ -1,3 +1,8 @@
+#include "../Include/Platform.fxh"
+#ifdef D_PLATFORM_BPR
+// The shipped BPR tunnel road samples no normal maps: it was built with the road shader disabled.
+#define D_DISABLE_ROAD_SHADER
+#endif
 #define USE_HDR_CONSTANTS
 #include "../Include/Constants.fxh"
 #include "../Include/NormalMapping.fxh"
@@ -94,7 +99,7 @@ texture2D NormalDetailTexture
     string scope = "material";
  string purpose = "none";
 >;
-sampler2D lineMapSampler : register(s0) 
+SAMPLER_2D(lineMapSampler, 0, 
 <
  string scope   = "material";
  string purpose = "none";
@@ -104,8 +109,8 @@ sampler2D lineMapSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D detailMapSampler : register(s1)
+});
+SAMPLER_2D(detailMapSampler, 1,
 <
  string scope   = "material";
  string purpose = "none";
@@ -115,8 +120,8 @@ sampler2D detailMapSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D baseMapSampler : register(s2)
+});
+SAMPLER_2D(baseMapSampler, 2,
 <
  string scope   = "material";
  string purpose = "none";
@@ -126,7 +131,10 @@ sampler2D baseMapSampler : register(s2)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
+#ifdef D_PLATFORM_BPR
+DECL_TEX2D(NormalTextureSampler, 3);
+#else
 sampler NormalTextureSampler : register(s3)
 <
     string scope = "material";
@@ -143,6 +151,10 @@ sampler NormalTextureSampler : register(s3)
     MipFilter = Linear;
 #endif
 };
+#endif
+#ifdef D_PLATFORM_BPR
+DECL_TEX2D(NormalDetailTextureSampler, 4);
+#else
 sampler NormalDetailTextureSampler : register(s4)
 <
     string scope = "material";
@@ -159,6 +171,7 @@ sampler NormalDetailTextureSampler : register(s4)
     MipFilter = Linear;
 #endif
 };
+#endif
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -211,12 +224,16 @@ vertexOutput VS_Main( vertexInput IN )
 }
 #ifdef D_MRT
 void PS_Main( in  vertexOutput IN,
+#ifndef D_PLATFORM_BPR
               in float4 windowPos : VPOS, 
+#endif
               out float4 oColour0 : COLOR0,
               out float4 oColour1 : COLOR1 )
 #else
 void PS_Main( in  vertexOutput IN,
+#ifndef D_PLATFORM_BPR
               in float4 windowPos : VPOS, 
+#endif
               out float4 oColour0 : COLOR0 )
 #endif
 {

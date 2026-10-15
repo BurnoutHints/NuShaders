@@ -23,7 +23,7 @@ from . import context, proc
 
 # Bump when the meaning of an action changes (new packer flags, different
 # intermediate handling) so old entries cannot be mistaken for current ones.
-ACTION_VERSION = 1
+ACTION_VERSION = 2  # 2: BPR reuse is verified, generated primaries follow the stock layout
 
 
 def _file_digest(path, chunk=1 << 20):

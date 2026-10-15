@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #define USE_HDR_CONSTANTS
 #include "../Include/Constants.fxh"
 #include "../Include/NormalMapping.fxh"
@@ -45,7 +46,7 @@ texture2D IllumTexture
 <
  string scope = "material";
 >;
-sampler2D DiffuseTextureSampler : register(s0)
+SAMPLER_2D(DiffuseTextureSampler, 0,
 <
  string scope = "material";
  string purpose = "none";
@@ -55,8 +56,8 @@ sampler2D DiffuseTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D IllumTextureSampler : register(s1)
+});
+SAMPLER_2D(IllumTextureSampler, 1,
 <
  string scope = "material";
  string purpose = "none";
@@ -66,7 +67,7 @@ sampler2D IllumTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;
@@ -123,6 +124,7 @@ float4 PS_Main( vertexOutput IN, float lfFace : VFACE ) : COLOR
 #endif
 {
  float4 diffuseTexture = tex2D( DiffuseTextureSampler, IN.texCoordDiffuseAndFog.xy );
+ ALPHA_TEST( diffuseTexture.a );
  float illumTexture = tex2D( IllumTextureSampler, IN.texCoordDiffuseAndFog.xy ).g;
  float lf2xWhiteLevel = (float)FogColourPlusWhiteLevel.w + (float)FogColourPlusWhiteLevel.w;
  illumTexture *= lf2xWhiteLevel;
@@ -187,7 +189,7 @@ vertexOutputZOnly VS_Main_ZOnly( vertexInputZOnly IN
 float4 PS_Main_ZOnly( vertexOutputZOnly IN ): COLOR
 {
  float4 lDiffuse = tex2D( DiffuseTextureSampler, IN.texCoordDiffuse);
- clip( lDiffuse.a - 0.499999f );
+ clip( lDiffuse.a - ALPHA_TEST_THRESHOLD );
 #ifdef D_MSAA_ENABLED
     float4 lfDepth = ( IN.hPositionDepthCopy.x / IN.hPositionDepthCopy.y );
     lfDepth.w = lDiffuse.a;

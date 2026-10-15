@@ -22,10 +22,11 @@ public sealed class BPRShaderProgramBuffer
     public const int HeaderRuntimePtrOffset = 0x04;
     public const int DescriptorRuntimePtrOffset = 0x14;
 
-    // The 36-byte fixed template that follows the 16-byte sampler map (identical in 235/242 stock primaries).
+    // The 36 bytes after the 16-byte sampler map, as a cbuffer-less shader has them. Binding $Globals clears
+    // byte 14 (BitmaskFor); nothing else here varies across the 242 stock primaries.
     private static ReadOnlySpan<byte> FixedTemplate =>
     [
-        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
         0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,
     ];
@@ -34,7 +35,7 @@ public sealed class BPRShaderProgramBuffer
     public uint MType;
     public uint RuntimePointer;   // @0x04
     public uint Reserved08;
-    public uint Version0C;        // = 1
+    public uint Version0C;        // 1 when $Globals is bound, else 0 (all 242 stock primaries)
     public uint Reserved10;
     public uint DXBCSize;         // @0x14
     public uint StringTableSize;  // @0x18
@@ -45,7 +46,7 @@ public sealed class BPRShaderProgramBuffer
     public byte[] BindingTable = [];     // BindingCount * 8
     public byte[] PreDescriptorPad = []; // alignment bytes between binding table and descriptor
     public byte[] Descriptor = [];       // 0x30
-    public byte[] Gap = [];              // descriptor end -> var table: zeros, or an embedded source-path string
+    public byte[] Gap = [];              // descriptor end -> var table: the engine's copy of $Globals, so cbuffer-sized
     public byte[] VarTable = [];         // varCount * 16
     public byte[] StringTable = [];
 
@@ -151,14 +152,14 @@ public sealed class BPRShaderProgramBuffer
     }
 
     // ==================================================================== build =====
-    /// <summary>Generate a primary from a compiled DXBC blob (the packer). Mirrors Build/pack_bpr_shader.ps1.</summary>
-    public static BPRShaderProgramBuffer FromDXBC(ReadOnlySpan<byte> dxbc, int gap = 0x320, IShaderReflection? reflection = null)
+    /// <summary>
+    /// The binding table a primary carries for a shader: samplers (0x0A) -> textures (0x05) -> cbuffers (0x1A),
+    /// each by register; the RDEF's <c>_Globals</c> is named <c>$Globals</c>. Bindings with no known BPR type
+    /// (tbuffers, UAVs, ...) are left out and returned in <paramref name="unsupported"/>.
+    /// </summary>
+    public static List<(string Name, int Reg, byte Type)> BindingTableFor(DXBCReflection refl, out List<ResourceBinding> unsupported)
     {
-        reflection ??= RdefReflection.Instance;
-        DXBCReflection refl = reflection.Reflect(dxbc);
-        uint dxbcSize = new SpanReader(dxbc).U32LE(0x18);
-
-        // Bindings: samplers (0x0A) -> textures (0x05) -> cbuffers (0x1A), each by register.
+        unsupported = [];
         var binds = new List<(string Name, int Reg, byte Type, int Order)>();
         foreach (var b in refl.Bindings)
         {
@@ -169,24 +170,55 @@ public sealed class BPRShaderProgramBuffer
                 ResourceKind.CBuffer => ((byte)0x1A, 2),
                 _ => ((byte)0, -1),
             };
-            if (order < 0) continue;
+            if (order < 0) { unsupported.Add(b); continue; }
             string name = b.Kind == ResourceKind.CBuffer && b.Name == "_Globals" ? "$Globals" : b.Name;
             binds.Add((name, b.Register, type, order));
         }
         binds.Sort((x, y) => x.Order != y.Order ? x.Order.CompareTo(y.Order) : x.Reg.CompareTo(y.Reg));
+        return binds.Select(b => (b.Name, b.Reg, b.Type)).ToList();
+    }
 
-        // Cbuffer variables in declaration order; byte0 of the packed field is the index.
-        var vars = new List<(string Name, int Offset, int Size, int Rows, int Cols, int Index)>();
-        int vi = 0;
-        foreach (var cb in refl.Cbuffers)
-            foreach (var v in cb.Variables)
-                vars.Add((v.Name, v.ByteOffset, v.SizeBytes, v.PackedRows, v.Columns, vi++));
+    /// <summary>
+    /// The 0x34 bytes after the header. Samplers s1..s15 sit at [reg - 1]; s0 has no entry. Bytes 15 and 30 are 0
+    /// when $Globals (b0) is bound and 0xFF otherwise. Pinned by the stock corpus (BPRShaderABITests).
+    /// </summary>
+    public static byte[] BitmaskFor(IEnumerable<(string Name, int Reg, byte Type)> binds)
+    {
+        var mask = new byte[BitmaskSize];
+        mask.AsSpan(0, 16).Fill(0xFF);
+        FixedTemplate.CopyTo(mask.AsSpan(16));
+        foreach (var b in binds)
+        {
+            if (b.Type == 0x0A && b.Reg is >= 1 and <= 15) mask[b.Reg - 1] = (byte)b.Reg;
+            if (b.Type == 0x1A) mask[15] = mask[16 + 14] = 0;
+        }
+        return mask;
+    }
+
+    /// <summary>
+    /// Generate a primary from a compiled DXBC blob (the packer), in the layout every stock primary uses
+    /// (BPRShaderABITests regenerates all 242 from their DXBC).
+    /// </summary>
+    public static BPRShaderProgramBuffer FromDXBC(ReadOnlySpan<byte> dxbc, IShaderReflection? reflection = null)
+    {
+        reflection ??= RdefReflection.Instance;
+        DXBCReflection refl = reflection.Reflect(dxbc);
+        uint dxbcSize = new SpanReader(dxbc).U32LE(0x18);
+
+        var binds = BindingTableFor(refl, out _);
+        bool hasCbuffer = binds.Any(b => b.Type == 0x1A);
+
+        // Only USED variables, keyed by their RDEF declaration index (byte0 of the packed field).
+        var vars = refl.Cbuffers.SelectMany(cb => cb.Variables).Where(v => v.IsUsed).ToList();
+        int gapBytes = refl.Cbuffers.Count > 0 ? refl.Cbuffers[0].SizeBytes : 0;
 
         int nb = binds.Count;
+        int bindEnd = BindingTableOffset + nb * 8;
         int descOff = DescriptorOffset(nb);
         int descEnd = descOff + DescriptorSize;
-        int varTableOff = descEnd + gap;
-        int strBase = varTableOff + vars.Count * 16;
+        int varTableOff = descEnd + gapBytes;
+        // Without a cbuffer there is no descriptor/gap/var table: the strings follow the binding table.
+        int strBase = hasCbuffer ? varTableOff + vars.Count * 16 : bindEnd;
 
         // String table: binding names (table order), then $Globals (shared), then var names. Deduped.
         var strBytes = new List<byte>();
@@ -201,8 +233,11 @@ public sealed class BPRShaderProgramBuffer
             return off;
         }
         foreach (var b in binds) AddStr(b.Name);
-        int cbNameOff = AddStr("$Globals");
+        int cbNameOff = hasCbuffer ? AddStr("$Globals") : 0;
         foreach (var v in vars) AddStr(v.Name);
+        int stringTableSize = strBytes.Count;
+        // The primary ends 16-aligned; stringTableSize excludes the padding.
+        strBytes.AddRange(new byte[Alignment.Align(strBase + strBytes.Count, 16) - (strBase + strBytes.Count)]);
 
         var bindingTable = new SpanWriter(nb * 8);
         foreach (var b in binds)
@@ -211,9 +246,26 @@ public sealed class BPRShaderProgramBuffer
             bindingTable.U32LE((uint)(b.Reg | (b.Type << 8) | (1 << 16)));
         }
 
+        var p = new BPRShaderProgramBuffer
+        {
+            MType = refl.Kind == ShaderKind.Pixel ? 1u : 0u,
+            Version0C = hasCbuffer ? 1u : 0u,
+            DXBCSize = dxbcSize,
+            StringTableSize = (uint)stringTableSize,
+            BindingCountRaw = (uint)nb,
+            Bitmask = BitmaskFor(binds),
+            BindingTable = bindingTable.ToArray(),
+        };
+        if (!hasCbuffer)
+        {
+            p.HasDescriptor = false;
+            p.Tail = strBytes.ToArray();
+            return p;
+        }
+
         int offsetB = descEnd + BindingTableOffset + nb * 8;
         var descriptor = new SpanWriter(DescriptorSize);
-        descriptor.U32LE(2); descriptor.U32LE(4); descriptor.U32LE(0); descriptor.U32LE((uint)gap);
+        descriptor.U32LE(2); descriptor.U32LE(4); descriptor.U32LE(0); descriptor.U32LE((uint)gapBytes);
         descriptor.U32LE(1); descriptor.U32LE(0); descriptor.U32LE((uint)offsetB); descriptor.U32LE(0);
         descriptor.U32LE((uint)cbNameOff); descriptor.U32LE((uint)vars.Count); descriptor.U32LE(1); descriptor.U32LE((uint)varTableOff);
 
@@ -221,31 +273,16 @@ public sealed class BPRShaderProgramBuffer
         foreach (var v in vars)
         {
             varTable.U32LE((uint)strOff[v.Name]);
-            varTable.U32LE((uint)v.Offset);
-            varTable.U32LE((uint)v.Size);
-            varTable.U32LE((uint)(v.Index | (0x03 << 8) | (v.Rows << 16) | (v.Cols << 24)));
+            varTable.U32LE((uint)v.ByteOffset);
+            varTable.U32LE((uint)v.SizeBytes);
+            varTable.U32LE((uint)(v.DeclarationIndex | (0x03 << 8) | (v.PackedRows << 16) | (v.Columns << 24)));
         }
 
-        var bitmask = new byte[BitmaskSize];
-        bitmask.AsSpan(0, 16).Fill(0xFF);
-        foreach (var b in binds)
-            if (b.Type == 0x0A) bitmask[(b.Reg + 15) % 16] = (byte)b.Reg;
-        FixedTemplate.CopyTo(bitmask.AsSpan(16));
-
-        return new BPRShaderProgramBuffer
-        {
-            MType = refl.Kind == ShaderKind.Pixel ? 1u : 0u,
-            Version0C = 1,
-            DXBCSize = dxbcSize,
-            StringTableSize = (uint)strBytes.Count,
-            BindingCountRaw = (uint)nb,
-            Bitmask = bitmask,
-            BindingTable = bindingTable.ToArray(),
-            PreDescriptorPad = new byte[descOff - (BindingTableOffset + nb * 8)],
-            Descriptor = descriptor.ToArray(),
-            Gap = new byte[gap],
-            VarTable = varTable.ToArray(),
-            StringTable = strBytes.ToArray(),
-        };
+        p.PreDescriptorPad = new byte[descOff - bindEnd];
+        p.Descriptor = descriptor.ToArray();
+        p.Gap = new byte[gapBytes];
+        p.VarTable = varTable.ToArray();
+        p.StringTable = strBytes.ToArray();
+        return p;
     }
 }

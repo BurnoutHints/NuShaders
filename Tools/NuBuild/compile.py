@@ -11,6 +11,15 @@ each, so the output depended on directory iteration order; see manifest.py.
 Intermediates land in Build/Output/<platform>/obj/<variant>/ rather than a temp
 directory that is deleted on exit. They are small, `clean` removes them, and
 having the actual .dxbc to hand is most of the debugging when a pack goes wrong.
+
+BPR packing policy. A stage that replaces a shipped resource is compared with
+that shipped shader by `pack-bpr --stock-primary-dir` (Reference/BPR/SHADERS):
+an identical interface reuses the stock primary; moved $Globals offsets get a
+generated one; a new or moved slot, changed stage I/O, or a variable the shipped
+shader never read fails the stage, because no primary makes the engine supply
+it. Either way <stage>.pack.log records the differences, which double as the
+porting to-do. `--generate` skips the comparison; unmatched stages (no resource
+id) always generate.
 """
 
 import os
@@ -150,9 +159,20 @@ def _jobs_from_manifest(data, shaders_dir, name_filter, technique_filter):
     return jobs
 
 
+def _reference_listing(res_id):
+    """Extracted disassembly of the shipped shader this stage replaces, if `reference extract` has run."""
+    import glob
+
+    hits = glob.glob(os.path.join(context.BPR_EXTRACTED, "*.%s.asm" % res_id.upper()))
+    return context.rel(hits[0]) if hits else None
+
+
 def _make_resource_action(job, platform, variant_obj, defines, tools, obj_dir, packing,
                           stock_primary_dir):
     target = platform.vs_target if job.stage == "vs" else platform.ps_target
+    # Only a stage that replaces a shipped resource has a stock primary to prove reuse against.
+    if not job.resource_id:
+        stock_primary_dir = None
     suffix = ".bin" if platform.name == "x360" else ".dxbc"
     blob = os.path.join(obj_dir, job.slug + suffix)
 
@@ -179,7 +199,9 @@ def _make_resource_action(job, platform, variant_obj, defines, tools, obj_dir, p
         tools=tools,
         extra=(platform.name, variant_obj.name, out_name,
                "pack" if packing else "nopack",
-               "stock:%s" % (stock_primary_dir or "")),
+               "stock:%s" % (stock_primary_dir or ""))
+              + tuple(cache.file_digest(os.path.join(stock_primary_dir, out_name + half))
+                      for half in ("_primary.dat", "_secondary.dat") if stock_primary_dir and packing),
     )
 
     def run(_scratch):
@@ -194,11 +216,18 @@ def _make_resource_action(job, platform, variant_obj, defines, tools, obj_dir, p
         xsd_txt = _run_xsd(tools["xsd"], blob) if platform.name == "x360" else None
         argv = _pack_argv(platform, tools, blob, xsd_txt, out_dir, out_name, stock_primary_dir)
         done = proc.run(argv, check=False)
+        # Kept on success too: for BPR it records which packing policy was chosen and why.
+        text = ((done.stderr or "") + (done.stdout or "")).strip("\r\n")
+        log = blob + ".pack.log"
+        if not proc.DRY_RUN:
+            with open(log, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text + "\n")
         if done.returncode != 0:
-            raise proc.StepError(
-                "pack failed for %s: %s"
-                % (job.slug, ((done.stderr or "") + (done.stdout or "")).strip()[:300])
-            )
+            fix = "full report: %s" % context.rel(log)
+            if stock_primary_dir and platform.name == "bpr":
+                ref = _reference_listing(job.resource_id)
+                fix += "; shipped shader: %s" % (ref or "run `nushaders.py reference extract` for its disassembly")
+            raise proc.StepError("pack failed for %s: %s" % (job.slug, text), fix=fix)
 
     return graph.Action(id=job.slug + "|" + variant_obj.name, label=job.label,
                         key=key, outputs=outputs, run=run)
@@ -232,7 +261,7 @@ def _make_effect_action(path, platform, variant_obj, defines, tools, out_dir):
 
 def build(platform_name, name_filter=None, technique=None, variant=None, extra_defines=(),
           force=False, jobs=None, no_pack=False, stock_primary_dir=None, version="Breaker",
-          effects=False, all_variants=False):
+          effects=False, all_variants=False, generate=False):
     platform = targets.get(platform_name)
     effect_mode = effects or platform.mode == "effect"
 
@@ -248,6 +277,8 @@ def build(platform_name, name_filter=None, technique=None, variant=None, extra_d
         variant_list = [targets.variant(platform, variant)]
 
     packing = not no_pack and not effect_mode and platform.mode == "resource"
+    if packing and platform.name == "bpr":
+        stock_primary_dir = _bpr_stock_dir(stock_primary_dir, generate)
     tools = _tool_map(platform, packing)
     store = cache.Cache(platform.name)
 
@@ -285,10 +316,33 @@ def build(platform_name, name_filter=None, technique=None, variant=None, extra_d
                      or "(none)"))
     if not packing and not effect_mode:
         proc.info("--no-pack: stopping after compile")
+    elif packing and platform.name == "bpr":
+        proc.info("primaries: %s" % ("checked against %s (identical: stock reused; layout moved: "
+                                     "generated; contract broken: refused)"
+                                     % context.rel(stock_primary_dir) if stock_primary_dir
+                                     else "generated from reflection, not checked against stock (--generate)"))
 
     stats = graph.run_actions(actions, store, jobs=jobs, force=force)
     store.save()
     return graph.report(stats, len(actions))
+
+
+def _bpr_stock_dir(explicit, generate):
+    """Where BPR's shipped pairs are, or None when the user asked for generated primaries."""
+    if generate:
+        if explicit:
+            raise proc.StepError("--generate and --stock-primary-dir contradict each other",
+                                 fix="pick one packing policy")
+        return None
+    path = explicit or context.BPR_SPB_REF
+    if not os.path.isdir(path):
+        raise proc.StepError(
+            "no stock ShaderProgramBuffer pairs at %s to verify reuse against" % context.rel(path),
+            code=context.EXIT_SKIP,
+            fix='nushaders.py reference import "<install>/SHADERS.BNDL", or pass --generate to '
+                "build every primary from reflection instead",
+        )
+    return path
 
 
 def clean(platform_name=None):

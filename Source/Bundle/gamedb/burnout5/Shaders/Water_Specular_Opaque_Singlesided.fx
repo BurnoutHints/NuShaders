@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #include "../Include/Shadow.fxh"
 #include "../Include/Fog.fxh"
@@ -77,7 +78,7 @@ textureCUBE ReflectionTexture
  string purpose = "none";
  string textureType = "CUBE";
 >;
-sampler2D WaveNormalMapSampler : register(s0) 
+SAMPLER_2D(WaveNormalMapSampler, 0, 
 <
  string scope = "material";
  string purpose = "none";
@@ -87,8 +88,8 @@ sampler2D WaveNormalMapSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-sampler2D RiverFloorTextureSampler : register(s1) 
+});
+SAMPLER_2D(RiverFloorTextureSampler, 1, 
 <
  string scope = "material";
  string purpose = "none";
@@ -98,8 +99,8 @@ sampler2D RiverFloorTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
-samplerCUBE ReflectionTextureSampler : register(s2) 
+});
+SAMPLER_CUBE(ReflectionTextureSampler, 2, 
 <
  string scope = "material";
  string purpose = "none";
@@ -111,7 +112,7 @@ samplerCUBE ReflectionTextureSampler : register(s2)
  MipFilter = Linear;
  AddressU = clamp;
  AddressV = clamp;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
 };

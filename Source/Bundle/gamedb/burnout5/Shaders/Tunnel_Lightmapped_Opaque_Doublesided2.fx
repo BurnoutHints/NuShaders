@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #define USE_HDR_CONSTANTS
 #include "../Include/Constants.fxh"
 #include "../Include/NormalMapping.fxh"
@@ -39,7 +40,7 @@ texture2D DiffuseTexture : diffuse
 <
  string scope = "material";
 >;
-sampler2D DiffuseTextureSampler : register(s0)
+SAMPLER_2D(DiffuseTextureSampler, 0,
 <
  string scope = "material";
  string purpose = "none";
@@ -49,12 +50,12 @@ sampler2D DiffuseTextureSampler : register(s0)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 texture2D LightmapTexture
 <
  string scope = "material";
 >;
-sampler2D LightmapTextureSampler : register(s1)
+SAMPLER_2D(LightmapTextureSampler, 1,
 <
  string scope = "material";
  string purpose = "none";
@@ -64,7 +65,7 @@ sampler2D LightmapTextureSampler : register(s1)
  MinFilter = Linear;
  MagFilter = Linear;
  MipFilter = Linear;
-};
+});
 struct vertexInput {
     float3 position    : POSITION;
     float3 normal    : NORMAL;

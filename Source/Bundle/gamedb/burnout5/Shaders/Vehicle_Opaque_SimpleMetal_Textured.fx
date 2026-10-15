@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #define SHADOW_APPLY_Z_BIAS
 #define SHADOW_Z_BIAS_VALUE 0.0001
@@ -81,7 +82,7 @@ texture2D DiffuseTexture
 <
     string scope = "material";
 >;
-sampler DiffuseTextureSampler : register(s0)
+SAMPLER_2D_UNTYPED(DiffuseTextureSampler, 0,
 <
     string scope = "material";
 > = sampler_state
@@ -90,13 +91,13 @@ sampler DiffuseTextureSampler : register(s0)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 struct DamagedInput
 {
     float3  position                : POSITION;
         float3  normal                  : NORMAL;
     float2  texCoordDiffuse         : TEXCOORD0;
-    float4  boneIndices             : BLENDINDICES;
+    BONE_INDICES4  boneIndices             : BLENDINDICES;
     float3  boneWeights             : BLENDWEIGHT;
 };
 struct DamagedOutput
@@ -336,7 +337,7 @@ technique ZOnlyOpaqueSingleSided
 }
 struct vertexInputZOnlySkinned {
     float3 position        : POSITION;
-    float4 boneIndices    : BLENDINDICES;
+    BONE_INDICES4 boneIndices    : BLENDINDICES;
     float3 boneWeights    : BLENDWEIGHT;
 };
 struct vertexOutputZOnlySkinned {

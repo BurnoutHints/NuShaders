@@ -1,3 +1,4 @@
+#include "../Include/Platform.fxh"
 #include "../Include/Transform.fxh"
 #define SHADOW_APPLY_Z_BIAS
 #define SHADOW_Z_BIAS_VALUE 0.00006
@@ -58,7 +59,7 @@ texture2D DiffuseTexture
 <
     string scope = "material";
 >;
-sampler DiffuseTextureSampler : register(s0)
+SAMPLER_2D_UNTYPED(DiffuseTextureSampler, 0,
 <
     string scope = "material";
 > = sampler_state
@@ -67,12 +68,12 @@ sampler DiffuseTextureSampler : register(s0)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 texture NormalTexture
 <
     string scope = "material";
 >;
-sampler NormalTextureSampler : register(s2)
+SAMPLER_2D_UNTYPED(NormalTextureSampler, 2,
 <
     string scope = "material";
 > = sampler_state
@@ -81,12 +82,12 @@ sampler NormalTextureSampler : register(s2)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 texture2D BlurDiffuseTexture
 <
     string scope = "material";
 >;
-sampler BlurDiffuseTextureSampler : register(s3)
+SAMPLER_2D_UNTYPED(BlurDiffuseTextureSampler, 3,
 <
     string scope = "material";
 > = sampler_state
@@ -95,12 +96,12 @@ sampler BlurDiffuseTextureSampler : register(s3)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 texture BlurNormalTexture
 <
     string scope = "material";
 >;
-sampler BlurNormalTextureSampler : register(s4)
+SAMPLER_2D_UNTYPED(BlurNormalTextureSampler, 4,
 <
     string scope = "material";
 > = sampler_state
@@ -109,7 +110,7 @@ sampler BlurNormalTextureSampler : register(s4)
     MinFilter = Linear;
     MagFilter = Linear;
     MipFilter = Linear;
-};
+});
 #define NORMAL_MAP_SWAP_TB
 #include "../Include/NormalMapping.fxh"
 #include "../Include/Fresnel.fxh"
@@ -213,8 +214,14 @@ void BlurredPS( in  Interpolators IN,
 float4 BlurredPS( Interpolators IN ) : COLOR
 #endif
 {
+#ifdef D_PLATFORM_BPR
+    // Remastered: cross-fade from the sharp maps to the blurred ones by the blur factor.
+    float4   diffuseTex = lerp( tex2D( DiffuseTextureSampler, IN.texCoordsAndBlur.xy ), tex2D( BlurDiffuseTextureSampler, IN.texCoordsAndBlur.xy ), IN.texCoordsAndBlur.z );
+    float4   normalTex = lerp( tex2D( NormalTextureSampler, IN.texCoordsAndBlur.xy ), tex2D( BlurNormalTextureSampler, IN.texCoordsAndBlur.xy ), IN.texCoordsAndBlur.z );
+#else
     float4   diffuseTex = tex2D( BlurDiffuseTextureSampler, IN.texCoordsAndBlur.xy );
     float4   normalTex = tex2D( BlurNormalTextureSampler, IN.texCoordsAndBlur.xy );
+#endif
     const float selfIllumination = 0.0;
     float3 baseColour = materialDiffuse.rgb * diffuseTex.rgb;
     float3   binormal = cross( IN.worldTangent, IN.worldNormal );

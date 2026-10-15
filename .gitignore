@@ -10,6 +10,7 @@ repack_and_send.*.psd1
 
 /Reference/**/SHADERS.BNDL
 /Reference/**/SHADERS/*
+/Reference/BPR/Extracted/
 /Reference/**/*ShaderDump/*
 
 Materials/

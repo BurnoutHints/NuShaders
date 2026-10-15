@@ -23,6 +23,15 @@ float4 ShadowMap_Constants2
  string scope = "global";
 >;
 
+#ifdef D_PLATFORM_BPR
+// Remastered addition (.x = PCF kernel step, see CalcShadowFactor3CSM). Declared here
+// because every shipped BPR $Globals has it between Constants2 and ObjectCsmSelect.
+float4 ShadowMap_Constants3
+<
+ string scope = "global";
+>;
+#endif
+
 float4 ShadowMap_ObjectCsmSelect
 <
     string scope = "object";
@@ -185,6 +194,47 @@ float CalcOrthoShadowFactorBySampler(
 }
 #endif // D_PLATFORM_BPR  (CalcOrthoShadowFactorBySampler)
 
+#ifdef D_PLATFORM_BPR
+// The remaster's soft shadow, shared by every BPR shadow factor below (reconstructed
+// from the shipped bytecode): nine SampleCmp taps spread by stepU/stepV around centre,
+// Gaussian-weighted, with the blur shrinking to nothing at 140 units.
+float ShadowPCF_BPR( float3 centre, float3 stepU, float3 stepV, float eyeZ )
+{
+    float blurRadius  = 5.0 * ( 1.0 - ( min( eyeZ, 140.0 ) / 140.0 ) );
+    float falloff     = blurRadius * blurRadius * 2.0;
+    float shadowedSum = 0.0;
+    float weightTotal = 0.0;
+    for ( float v = -1.0; v <= 1.0; v += 1.0 )
+    {
+        for ( float u = -1.0; u <= 1.0; u += 1.0 )
+        {
+            float  weight = exp( -( u*u + v*v ) / falloff );
+            float3 tap    = centre + v * stepV + u * stepU;
+            shadowedSum  += weight * shadowMapSamplerHighDetailTexture.SampleCmpLevelZero( shadowMapSamplerHighDetail, tap.xy, tap.z );
+            weightTotal  += weight;
+        }
+    }
+    return saturate( shadowedSum * ( 1.0 / weightTotal ) );
+}
+
+// The cascade eyeZ picks, pos mapped through it, and the PCF steps: ShadowMap_Constants3.x
+// along world x and y. A step only depends on the matrix's linear part, which is why the
+// vehicle PS can pass a light-space position here and still get the shipped result.
+void ShadowSteps_BPR( float3 pos, float eyeZ, out float3 origin, out float3 stepU, out float3 stepV )
+{
+    bool beforeFar  = eyeZ < ShadowMap_Constants.y;
+    bool beforeNear = eyeZ < ShadowMap_Constants.x;
+    float4x4 w2l = beforeNear ? ShadowMap_WorldToLight[0]
+                 : beforeFar  ? ShadowMap_WorldToLight[1]
+                              : ShadowMap_WorldToLight[2];
+    float3 posU = pos + float3( ShadowMap_Constants3.x, 0, 0 );
+    float3 posV = pos + float3( 0, ShadowMap_Constants3.x, 0 );
+    origin = mul( float4( pos, 1.0 ), w2l ).xyz;
+    stepU  = mul( float4( posU, 1.0 ), w2l ).xyz - origin;
+    stepV  = mul( float4( posV, 1.0 ), w2l ).xyz - origin;
+}
+#endif
+
 void
 GetShadowMapPositions2CSMSelect(
     in float3 positionWorld,
@@ -210,6 +260,11 @@ GetShadowMapPositions2CSMSelectVS(
     float   distanceThresh = ( objectDistance < ShadowMap_Constants2.x ) ? ShadowMap_Constants.x : ShadowMap_Constants.y;
     float3 position0 = mul( float4( positionWorld,1 ), ShadowMap_WorldToLight[firstCsmIndex] ).xyz;
     float3 position1 = mul( float4( positionWorld,1 ), ShadowMap_WorldToLight[firstCsmIndex+1] ).xyz;
+#if defined(D_PLATFORM_BPR) && defined(SHADOW_APPLY_Z_BIAS)
+    // Remastered: the shader's own SHADOW_Z_BIAS_VALUE, engine-scaled, on both cascades.
+    position0.z -= ShadowMap_Constants2.z * SHADOW_Z_BIAS_VALUE;
+    position1.z -= ShadowMap_Constants2.z * SHADOW_Z_BIAS_VALUE;
+#endif
     texCoord0 = float4( position0, eyeZ );
     texCoord1 = float4( position1, distanceThresh );
 }
@@ -222,10 +277,14 @@ GetShadowMapPositions3CSM(
     out float4 texCoord1 )
 {
 #ifdef D_PLATFORM_BPR
-    // BPR does the cascade transform + PCF in the pixel shader (matches the
-    // Remastered Specular_1Bit), so just carry world position + eyeZ.
-    texCoord0 = float4( positionWorld, eyeZ );
-    texCoord1 = float4( 0, 0, 0, 0 );
+    // Remastered: the PS picks the cascade itself from the world position in
+    // texCoord1. texCoord0.xyz (cascade 0) is unused by the PS but shipped.
+    float3 position0 = mul( float4( positionWorld,1 ), ShadowMap_WorldToLight[0] ).xyz;
+#ifdef SHADOW_APPLY_Z_BIAS
+    position0.z -= ShadowMap_Constants2.z * SHADOW_Z_BIAS_VALUE;
+#endif
+    texCoord0 = float4( position0, eyeZ );
+    texCoord1 = float4( positionWorld, 1.0 );
 #else
     float3 position0 = mul( float4( positionWorld,1 ), ShadowMap_WorldToLight[0] ).xyz;
     float3 position1 = mul( float4( positionWorld,1 ), ShadowMap_WorldToLight[1] ).xyz;
@@ -281,46 +340,26 @@ CalcShadowFactor3CSM(
     in float     NDotL )
 {
 #ifdef D_PLATFORM_BPR
-    // Ported from Remastered Specular_1Bit PS: transform world position into the
-    // selected cascade's light space in the pixel shader, then do a 3x3 Gaussian PCF.
-    // lLightSpacePosPacked0 = (worldPos.xyz, eyeZ) (see GetShadowMapPositions3CSM).
-    float3 worldPos = lLightSpacePosPacked0.xyz;
-    float  eyeZ     = lLightSpacePosPacked0.w;
-    float  shadowed;
+    // Remastered: the PS picks the cascade itself from the world position in
+    // lLightSpacePosPacked1 (see GetShadowMapPositions3CSM).
+    float  eyeZ = lLightSpacePosPacked0.w;
+    float  factor;
     if ( eyeZ > 140.0 )
     {
-        shadowed = 0.0;
+        factor = 0.0;
     }
     else
     {
-        float4x4 w2l = ( eyeZ < ShadowMap_Constants.x ) ? ShadowMap_WorldToLight[0]
-                     : ( eyeZ < ShadowMap_Constants.y ) ? ShadowMap_WorldToLight[1]
-                                                        : ShadowMap_WorldToLight[2];
-        float  texelStep = ShadowMap_Constants3.x;                       // world-space PCF kernel step
-        float3 lsCenter  = mul( float4( worldPos, 1.0 ), w2l ).xyz;
-        float3 lsDeltaX  = mul( float4( worldPos + float3( texelStep, 0, 0 ), 1.0 ), w2l ).xyz - lsCenter;
-        float3 lsDeltaY  = mul( float4( worldPos + float3( 0, texelStep, 0 ), 1.0 ), w2l ).xyz - lsCenter;
+        float3 centre, stepU, stepV;
+        ShadowSteps_BPR( lLightSpacePosPacked1.xyz, eyeZ, centre, stepU, stepV );
 #ifdef SHADOW_APPLY_Z_BIAS
-        lsCenter.z      -= ShadowMap_Constants2.z * SHADOW_Z_BIAS_VALUE; // engine-scaled depth bias (exact match to the Remastered boardwalk PS)
+        centre.z -= ShadowMap_Constants2.z * SHADOW_Z_BIAS_VALUE;
 #endif
-        float  blur      = 5.0 * ( 1.0 - min( 140.0, eyeZ ) / 140.0 );
-        float  falloff   = max( 2.0 * blur * blur, 1e-4 );
-        float  sum = 0.0, weightTotal = 0.0;
-        [unroll] for ( int i = -1; i <= 1; i++ )
-        {
-            [unroll] for ( int j = -1; j <= 1; j++ )
-            {
-                float  weight = exp2( 1.44269502 * ( -(float)( i*i + j*j ) / falloff ) );
-                float3 sp     = lsCenter + (float)i * lsDeltaY + (float)j * lsDeltaX;
-                sum         += weight * shadowMapSamplerHighDetailTexture.SampleCmpLevelZero( shadowMapSamplerHighDetail, sp.xy, sp.z );
-                weightTotal += weight;
-            }
-        }
-        shadowed = saturate( sum / weightTotal );
+        factor = ShadowPCF_BPR( centre, stepU, stepV, eyeZ );
     }
     float cutoffFactor = saturate( ( NDotL - 0.25 ) * 20.0 );
     float fadeValue    = saturate( (float)ShadowMap_Constants.w - eyeZ * (float)ShadowMap_Constants2.w );
-    return ApplyFade( shadowed * cutoffFactor, fadeValue );
+    return ApplyFade( factor * cutoffFactor, fadeValue );
 #else
     float3 lLightSpacePos0 = lLightSpacePosPacked0.xyz;
     float3 lLightSpacePos1 = float3( lLightSpacePosPacked1.xy, lLightSpacePosPacked0.z );
@@ -382,6 +421,21 @@ CalcShadowFactor2CSMSelect(
     float3 lLightSpacePos1 = lLightSpacePosPacked1.xyz;
     float3 lLightSpacePos0or1   = ( lLightSpacePosPacked0.w < lLightSpacePosPacked1.w ? lLightSpacePos0 : lLightSpacePos1 );
     float3 metaMapTexCoord      = lLightSpacePos0or1;
+#ifdef D_PLATFORM_BPR
+    // Remastered (Foliage_1Bit_Doublesided, the only user): the shared PCF with no tap
+    // spread, and no NdotL cutoff.
+    float factor;
+    if ( lLightSpacePosPacked0.w > 140.0 )
+    {
+        factor = 0.0;
+    }
+    else
+    {
+        factor = ShadowPCF_BPR( metaMapTexCoord, (float3)0, (float3)0, lLightSpacePosPacked0.w );
+    }
+    float fadeValue    = saturate( (float)ShadowMap_Constants.w - (float)lLightSpacePosPacked0.w * (float)ShadowMap_Constants2.w );
+    return ApplyFade( factor, fadeValue );
+#else
 #ifdef D_SOFT_SHADOWS
     float factor = CalcOrthoShadowFactorBySampler( shadowMapSamplerHighDetail, metaMapTexCoord, lLightSpacePosPacked0.w );
 #else
@@ -390,6 +444,7 @@ CalcShadowFactor2CSMSelect(
     float cutoffFactor = saturate( ( NDotL - 0.25 ) * 20.0 );
     float fadeValue    = saturate( (float)ShadowMap_Constants.w - (float)lLightSpacePosPacked0.w * (float)ShadowMap_Constants2.w );
     return ApplyFade( factor * cutoffFactor, fadeValue );
+#endif
 }
 
 float
@@ -420,11 +475,32 @@ CalcShadowFactorCSM_Vehicle_Damaged_2CSM_Select
     float3 lLightSpacePos1 = lLightSpacePosPacked1.xyz;
     float3 lLightSpacePos0or1 = ( lLightSpacePosPacked0.w < lLightSpacePosPacked1.w ? lLightSpacePos0 : lLightSpacePos1 );
     float3 metaMapTexCoord    = lLightSpacePos0or1;
+#ifdef D_PLATFORM_BPR
+    // Remastered: the shared PCF, centred on the biased cascade position the VS picked.
+    float  eyeZ = lLightSpacePosPacked0.w;
+    float  factor;
+    if ( eyeZ > 140.0 )
+    {
+        factor = 0.0;
+    }
+    else
+    {
+        float damageBiasModifier = saturate( damage - 0.05 ) * 0.002;
+        float biasFactor = 1.0 - NDotL * NDotL;
+        float nearBias   = min( -0.00019 * biasFactor, -0.000051 ) - damageBiasModifier;
+        metaMapTexCoord.z+=nearBias * ShadowMap_Constants2.z;
+        float3 origin, stepU, stepV;
+        ShadowSteps_BPR( lLightSpacePosPacked1.xyz, eyeZ, origin, stepU, stepV );
+        factor = ShadowPCF_BPR( metaMapTexCoord, stepU, stepV, eyeZ );
+    }
+#else
     float damageBiasModifier = saturate( damage - 0.05 ) * 0.002;
     float biasFactor = 1.0 - NDotL * NDotL;
     float nearBias   = min( -0.00019 * biasFactor, -0.000051 ) - damageBiasModifier;
     metaMapTexCoord.z+=nearBias * ShadowMap_Constants2.z;
-#ifdef D_SOFT_SHADOWS
+#endif
+#if defined(D_PLATFORM_BPR)
+#elif defined(D_SOFT_SHADOWS)
     float factor = CalcOrthoShadowFactorBySampler( shadowMapSamplerHighDetail, metaMapTexCoord, lLightSpacePosPacked0.w );
 #else
     float factor = CalcOrthoShadowFactorBySampler( shadowMapSamplerHighDetail, metaMapTexCoord );
